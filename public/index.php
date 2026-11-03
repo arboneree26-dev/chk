@@ -69,7 +69,7 @@ $htmlFiles = glob(__DIR__ . '/HTML DEBUG/*.html');
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cakto Checker API @buzeira171</title>
+<title>Caktozed Checker API @buzeira171</title>
 <style>
 :root{
   --bg:#0a0e17; --bg-card:#111827; --bg-input:#1a2234;
@@ -147,7 +147,7 @@ button{font-family:inherit;font-size:14px;font-weight:600;padding:12px 24px;bord
 <body>
 
 <header class="header">
-  <h1>🛡️ Cakto Checker <span class="badge">API v2.2</span></h1>
+  <h1>🛡️ Caktozed Checker <span class="badge">API v2.2</span></h1>
   <span class="status-pill">Online</span>
 </header>
 
