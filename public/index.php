@@ -3,45 +3,60 @@
 error_reporting(0);
 date_default_timezone_set('America/Sao_Paulo');
 
-// Processa requisições AJAX
+// ========== PROCESSA REQUISIÇÕES AJAX ==========
 if (isset($_POST['action']) && $_POST['action'] === 'check') {
+    // Limpa qualquer output acidental
+    while (ob_get_level()) ob_end_clean();
+    ob_start();
+    
     header('Content-Type: application/json; charset=utf-8');
     
-    $lista = trim($_POST['lista'] ?? '');
-    
-    if (empty($lista)) {
-        echo json_encode(['ok' => false, 'msg' => 'Nenhum cartão informado']);
+    try {
+        $lista = trim($_POST['lista'] ?? '');
+        
+        if (empty($lista)) {
+            echo json_encode(['ok' => false, 'msg' => 'Nenhum cartão informado']);
+            exit;
+        }
+        
+        $cartoes = preg_split('/[\r\n]+/', $lista, -1, PREG_SPLIT_NO_EMPTY);
+        $novosResultados = [];
+        
+        foreach ($cartoes as $linha) {
+            $linha = trim($linha);
+            if (empty($linha)) continue;
+            
+            $_GET['lista'] = $linha;
+            
+            ob_start();
+            include __DIR__ . '/cakto.php';
+            $output = trim(ob_get_clean());
+            
+            $novosResultados[] = [
+                'linha' => $output,
+                'live'  => (strpos($output, '✅ LIVE') !== false)
+            ];
+        }
+        
+        ob_end_clean();
+        echo json_encode([
+            'ok' => true,
+            'total' => count($novosResultados),
+            'resultados' => $novosResultados
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+        
+    } catch (Throwable $e) {
+        ob_end_clean();
+        echo json_encode([
+            'ok' => false,
+            'msg' => 'Erro interno: ' . $e->getMessage()
+        ]);
         exit;
     }
-    
-    $cartoes = preg_split('/[\r\n]+/', $lista, -1, PREG_SPLIT_NO_EMPTY);
-    $novosResultados = [];
-    
-    foreach ($cartoes as $linha) {
-        $linha = trim($linha);
-        if (empty($linha)) continue;
-        
-        $_GET['lista'] = $linha;
-        
-        ob_start();
-        include __DIR__ . '/cakto.php';
-        $output = trim(ob_get_clean());
-        
-        $novosResultados[] = [
-            'linha' => $output,
-            'live'  => (strpos($output, '✅ LIVE') !== false)
-        ];
-    }
-    
-    echo json_encode([
-        'ok' => true,
-        'total' => count($novosResultados),
-        'resultados' => $novosResultados
-    ], JSON_UNESCAPED_UNICODE);
-    exit;
 }
 
-// Status do sistema
+// ========== STATUS DO SISTEMA ==========
 $slugControlFile = __DIR__ . '/slug_control.txt';
 $slugAtual = file_exists($slugControlFile) ? (int)file_get_contents($slugControlFile) : 0;
 $debugFiles = glob(__DIR__ . '/debug_cakto_*.txt');
@@ -201,19 +216,35 @@ button{font-family:inherit;font-size:14px;font-weight:600;padding:12px 24px;bord
 // ===== Estado global: só acumula LIVE =====
 let livesAcumulados = [];
 
-// Carrega do localStorage (persiste mesmo se recarregar a página)
+// Carrega do localStorage com validação robusta
 function carregarLives(){
   try{
     const raw = localStorage.getItem('cakto_lives');
-    if(raw) livesAcumulados = JSON.parse(raw);
-  }catch(e){ livesAcumulados = []; }
+    if(!raw){
+      livesAcumulados = [];
+    } else {
+      const parsed = JSON.parse(raw);
+      if(Array.isArray(parsed)){
+        livesAcumulados = parsed.filter(x => typeof x === 'string' && x.length > 0);
+      } else {
+        livesAcumulados = [];
+        localStorage.removeItem('cakto_lives');
+      }
+    }
+  }catch(e){
+    console.warn('localStorage corrompido, resetando:', e);
+    livesAcumulados = [];
+    try{ localStorage.removeItem('cakto_lives'); }catch(_){}
+  }
   renderizarLives();
 }
 
 function salvarLives(){
   try{
     localStorage.setItem('cakto_lives', JSON.stringify(livesAcumulados));
-  }catch(e){}
+  }catch(e){
+    console.warn('Não foi possível salvar no localStorage:', e);
+  }
 }
 
 function renderizarLives(){
@@ -255,7 +286,6 @@ async function checkCards(){
   spinner.style.display = 'inline-block';
   btnText.textContent = 'Validando...';
   
-  // Mensagem temporária enquanto processa
   const output = document.getElementById('output');
   const panel = document.getElementById('resultPanel');
   panel.classList.add('show');
@@ -266,37 +296,45 @@ async function checkCards(){
     form.append('action', 'check');
     form.append('lista', lista);
     
-    const resp = await fetch('', { method: 'POST', body: form });
-    const data = await resp.json();
+    const resp = await fetch(window.location.href, { 
+      method: 'POST', 
+      body: form 
+    });
+    
+    const text = await resp.text();
+    let data;
+    try{
+      data = JSON.parse(text);
+    }catch(parseErr){
+      console.error('Resposta não-JSON do servidor:', text);
+      throw new Error('Servidor retornou resposta inválida. Verifique o console (F12).');
+    }
     
     if(!data.ok){
-      alert('Erro: ' + data.msg);
+      alert('Erro: ' + (data.msg || 'desconhecido'));
       renderizarLives();
       return;
     }
     
-    // 🔥 Aqui está a mágica: só adiciona os LIVE, descarta os DIE
     let novosLives = 0;
-    data.resultados.forEach(r => {
-      if(r.live && !livesAcumulados.includes(r.linha)){
-        livesAcumulados.push(r.linha);
-        novosLives++;
+    (data.resultados || []).forEach(r => {
+      if(r && r.live && typeof r.linha === 'string'){
+        if(!livesAcumulados.includes(r.linha)){
+          livesAcumulados.push(r.linha);
+          novosLives++;
+        }
       }
     });
     
     salvarLives();
     renderizarLives();
     
-    if(novosLives > 0){
-      console.log(`✅ ${novosLives} novo(s) LIVE adicionado(s)`);
-    } else {
-      console.log('Nenhum novo LIVE nesta lista');
-    }
+    console.log(`✅ ${novosLives} novo(s) LIVE adicionado(s)`);
     
-    // Limpa textarea automaticamente após checar
     document.getElementById('lista').value = '';
     
   }catch(e){
+    console.error('Erro completo:', e);
     alert('Erro: ' + e.message);
     renderizarLives();
   }finally{
@@ -336,7 +374,7 @@ function limparTudo(){
   document.getElementById('lista').value = '';
 }
 
-// Inicializa ao carregar a página
+// Inicializa
 carregarLives();
 </script>
 
